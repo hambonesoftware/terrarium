@@ -130,6 +130,41 @@ el('pause').addEventListener('click',()=>{paused=!paused;el('pause').textContent
 rand=seeded(seed);resetSpecies();generate();biome();requestAnimationFrame(frame);
 }
 
+// Mobile Safari can report a valid WebGL context even if shader compilation or
+// initialization subsequently fails. Always provide a complete Canvas 2D renderer.
+let terrariumGraphicsRecovered = false;
+function terrariumRecoverGraphics(reason){
+  if(terrariumGraphicsRecovered)return;
+  terrariumGraphicsRecovered=true;
+  if(reason)console.warn('Terrarium 3D renderer unavailable. Switching to 2D.',reason);
+  const oldCanvas=document.getElementById('scene');
+  if(oldCanvas){
+    // A canvas that has been used for WebGL cannot be reused for Canvas 2D.
+    const replacement=document.createElement('canvas');
+    replacement.id='scene';
+    replacement.className=oldCanvas.className;
+    replacement.setAttribute('aria-label','Interactive terrarium ecosystem');
+    oldCanvas.replaceWith(replacement);
+  }
+  try{
+    start2DFallback();
+  }catch(error){
+    console.error('Both terrarium renderers failed:',error);
+    const message=document.getElementById('webglFallback');
+    if(message){
+      message.textContent='Unable to start the graphics engine. Please reload this page or try Safari directly.';
+      message.style.display='grid';
+    }
+  }
+}
+// Prefer our reliable 2.5D painter on iPhone and iPad, including iPadOS's
+// desktop-class Safari user agent. Desktop browsers can use full WebGL.
+const terrariumIsIOS=/iPad|iPhone|iPod/i.test(navigator.userAgent)||
+  (navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+if(terrariumIsIOS){
+  terrariumRecoverGraphics(null);
+}else{
+  try{
 (()=>{'use strict';
 const canvas=document.getElementById('scene');
 const gl=canvas.getContext('webgl',{antialias:true,alpha:false,premultipliedAlpha:false,powerPreference:'high-performance'});
@@ -253,13 +288,13 @@ function makeCreaturePlacements(){rng=seeded(seed+9012);creaturePositions=[];for
 function drawCreatures(){for(let c of creaturePositions){let population=populations.find(s=>s.id===c.kind);if(!population||population.count<2)continue;let visibleRatio=clamp(population.count/(c.kind==='moth'?96:c.kind==='pond'?70:64),0,1),threshold=(c.index+1)/(c.kind==='moth'?22:c.kind==='grazer'?12:c.kind==='hopper'?16:16);if(threshold>visibleRatio)continue;let wobble=time*c.speed+c.phase,x=c.x+Math.sin(wobble*.72)*.14,z=c.z+Math.cos(wobble*.86)*.14,h=ground(x,z);if(c.kind==='pond')h=Math.max(h,waterHeight()+.03);if(c.kind==='moth')h+=.75+Math.sin(wobble*4)*.16;else h+=Math.abs(Math.sin(wobble*3))* .035;let heading=c.heading+Math.sin(wobble*.7)*.8,scale=c.kind==='moth'?.72:c.kind==='grazer'?.75:c.kind==='pond'?.63:.62;drawMesh(creatureMeshes[c.kind],0,model(x,h,z,heading,scale));}}
 function drawParticles(proj,view){gl.useProgram(particleP);gl.uniformMatrix4fv(pa.uProj,false,proj);gl.uniformMatrix4fv(pa.uView,false,view);gl.uniform1f(pa.uTime,time);gl.bindBuffer(gl.ARRAY_BUFFER,particles.buffer);let loc=gl.getAttribLocation(particleP,'aPosition');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,3,gl.FLOAT,false,16,0);loc=gl.getAttribLocation(particleP,'aSize');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,1,gl.FLOAT,false,16,12);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.depthMask(false);gl.drawArrays(gl.POINTS,0,particles.count);gl.depthMask(true);gl.disable(gl.BLEND);}
 function resize(){const dpr=Math.min(window.devicePixelRatio||1,1.75),w=Math.max(1,Math.floor(canvas.clientWidth*dpr)),h=Math.max(1,Math.floor(canvas.clientHeight*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}}
-function render(ms){resize();let dt=Math.min(.055,(ms-lastTime)/1000||.016);lastTime=ms;if(!paused){time+=dt*speed;sinceGeneration+=dt*speed;while(sinceGeneration>=1.45){sinceGeneration-=1.45;evolve();}}
+function render(ms){try{resize();let dt=Math.min(.055,(ms-lastTime)/1000||.016);lastTime=ms;if(!paused){time+=dt*speed;sinceGeneration+=dt*speed;while(sinceGeneration>=1.45){sinceGeneration-=1.45;evolve();}}
  const aspect=canvas.width/canvas.height,camera=[Math.sin(yaw)*Math.cos(pitch)*distance,Math.sin(pitch)*distance+1.1,Math.cos(yaw)*Math.cos(pitch)*distance];const view=lookAt(camera,[0,1.2,0]),proj=perspective(41*Math.PI/180,aspect,.1,80);
  gl.clearColor(.055,.105,.126,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.disable(gl.CULL_FACE);
  gl.useProgram(p);gl.uniformMatrix4fv(uniforms.uProj,false,proj);gl.uniformMatrix4fv(uniforms.uView,false,view);gl.uniform1f(uniforms.uTime,time);gl.uniform1f(uniforms.uWind,.6+.4*moist/100);gl.uniform1f(uniforms.uMoisture,moist/100);gl.uniform1f(uniforms.uHeat,temp/100);gl.uniform3fv(uniforms.uCamera,new Float32Array(camera));
  for(let mesh of staticMeshes)drawMesh(mesh,0,identity());drawMesh(water,1,identity());drawCreatures();
  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);drawMesh(glass,2,identity());gl.depthMask(true);gl.disable(gl.BLEND);drawParticles(proj,view);
- requestAnimationFrame(render);}
+ requestAnimationFrame(render);}catch(error){terrariumRecoverGraphics(error);}}
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);activePointers.set(e.pointerId,[e.clientX,e.clientY]);oldX=e.clientX;oldY=e.clientY;drag=true;canvas.classList.add('dragging');});
 canvas.addEventListener('pointermove',e=>{if(!activePointers.has(e.pointerId))return;activePointers.set(e.pointerId,[e.clientX,e.clientY]);if(activePointers.size===2){let ps=[...activePointers.values()],len=Math.hypot(ps[0][0]-ps[1][0],ps[0][1]-ps[1][1]);if(lastPinch)distance=clamp(distance*lastPinch/len,10.8,27);lastPinch=len;}else if(drag){yaw-=(e.clientX-oldX)*.006;pitch=clamp(pitch+(e.clientY-oldY)*.004,-.08,1.1);}oldX=e.clientX;oldY=e.clientY;});
 function endPointer(e){activePointers.delete(e.pointerId);if(activePointers.size<2)lastPinch=0;if(!activePointers.size){drag=false;canvas.classList.remove('dragging');}}
@@ -271,7 +306,12 @@ $('pause').addEventListener('click',()=>{paused=!paused;$('pause').textContent=p
 $('speed').addEventListener('click',()=>{speed=speed===1?4:speed===4?12:1;$('speed').textContent=speed+'× Time';});
 $('newWorld').addEventListener('click',()=>{seed+=10251+Math.floor(Math.random()*100000);generateWorld(true);makeCreaturePlacements();});
 $('togglePanel').addEventListener('click',()=>{$('sidePanel').classList.toggle('expanded');$('togglePanel').textContent=$('sidePanel').classList.contains('expanded')?'✕':'☷';});
+canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();terrariumRecoverGraphics('WebGL context lost');},{once:true});
 window.addEventListener('resize',resize);generateWorld(true);makeCreaturePlacements();requestAnimationFrame(render);
 })();
+  }catch(error){
+    terrariumRecoverGraphics(error);
+  }
+}
 </script>
 </body></html>
